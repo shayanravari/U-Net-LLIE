@@ -1,14 +1,15 @@
 import os
 import glob
 import math
+import argparse
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
+import matplotlib.pyplot as plt
 from torch.utils.data import Dataset, DataLoader
 from pytorch_msssim import ssim
-import torch.nn.functional as F
 from torchvision import transforms
-import matplotlib.pyplot as plt
 from PIL import Image
 
 # -------------------------
@@ -37,7 +38,7 @@ class SEBlock(nn.Module):
         y = self.fc(y)                   # shape [B, C]
         y = y.view(b, c, 1, 1)          # reshape for broadcast
         return x * y
-
+    
 class DoubleConv(nn.Module):
     """
     A helper module that performs two convolution layers + ReLU.
@@ -51,7 +52,7 @@ class DoubleConv(nn.Module):
             nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
             nn.ReLU(inplace=True)
         )
-        self.se = SEBlock(out_channels, reduction=16)
+        self.se = SEBlock(out_channels)
 
     def forward(self, x):
         x = self.conv(x)
@@ -109,17 +110,19 @@ class OutConv(nn.Module):
         return self.conv(x)
 
 class SimpleUNet(nn.Module):
-    def __init__(self, in_channels=3, out_channels=3, features=32):
+    def __init__(self, in_channels=3, out_channels=3, features=16):
         super(SimpleUNet, self).__init__()
         # Encoder
         self.inc = DoubleConv(in_channels, features)        
         self.down1 = Down(features, features*2)
         self.down2 = Down(features*2, features*4)
+        self.down3 = Down(features*4, features*8)
 
         # Bottleneck
-        self.bottleneck = DoubleConv(features*4, features*8)
+        self.bottleneck = DoubleConv(features*8, features*16)
 
         # Decoder
+        self.up4 = Up(features*16, features*8)
         self.up3 = Up(features*8, features*4)
         self.up2 = Up(features*4, features*2)
         self.up1 = Up(features*2, features)
@@ -132,12 +135,14 @@ class SimpleUNet(nn.Module):
         x1 = self.inc(x)          # shape [B, 32, H, W]
         x2 = self.down1(x1)       # shape [B, 64, H/2, W/2]
         x3 = self.down2(x2)       # shape [B, 128, H/4, W/4]
+        x4 = self.down3(x3)       # shape [B, 256, H/8, W/8]
 
         # Bottleneck
-        xB = self.bottleneck(x3)  # shape [B, 256, H/4, W/4]
+        xB = self.bottleneck(x4)  # shape [B, 256, H/4, W/4]
 
         # Decoder
-        x = self.up3(xB, x3)      # shape [B, 128, H/2, W/2]
+        x = self.up4(xB, x4)      # shape [B, 128, H/2, W/2]
+        x = self.up3(x, x3)      # shape [B, 128, H/2, W/2]
         x = self.up2(x, x2)       # shape [B, 64, H, W]
         x = self.up1(x, x1)       # shape [B, 32, H, W]
 
@@ -205,7 +210,7 @@ def psnr(pred, target):
         return 100
     return 10 * math.log10(1 / mse)
 
-def combined_l1_ssim_loss(pred, target, alpha=0.5, beta=0.5):
+def combined_l1_ssim_loss(pred, target, alpha=0, beta=1):
     l1 = F.l1_loss(pred, target)
     ssim_val = ssim(pred, target, data_range=1.0)
     return alpha * l1 + beta * (1 - ssim_val)
@@ -223,18 +228,16 @@ def test_loop(model, dataloader, device, e, num_epochs):
             # Forward pass
             pred = model(low_img)
 
-            # Compute metrics
-            l1 = nn.L1Loss()(pred, normal_img).item()
-            total_l1 += l1
-
             # Compute PSNR
-            pred_clamped = torch.clamp(pred, 0, 1)  # ensure range [0,1]
+            pred_clamped = torch.clamp(pred + low_img, 0, 1)
             total_psnr += psnr(pred_clamped, normal_img)
+
+            # Compute metrics
+            l1 = nn.L1Loss()(pred_clamped, normal_img).item()
+            total_l1 += l1
 
             if e == num_epochs - 1:
                 pred_image = pred_clamped.squeeze(0).cpu()
-
-                # Rearrange from [3, H, W] -> [H, W, 3]
                 pred_image = pred_image.permute(1, 2, 0).numpy()
 
                 # Display
@@ -254,62 +257,77 @@ def test_loop(model, dataloader, device, e, num_epochs):
 # -------------------------
 
 def main():
+    parser = argparse.ArgumentParser(description="Train or test the U-Net model.")
+    parser.add_argument('--mode', type=str, default='train', choices=['train', 'test'],
+                        help="Select 'train' to train a new model or 'test' to load a saved model and run testing.")
+    args = parser.parse_args()
+
     # Hyperparameters
     root_dir_train = "LLIE_dataset\\train"
     root_dir_test = "LLIE_dataset\\test"
-    batch_size = 2
-    num_epochs = 5
+    batch_size = 3
+    num_epochs = 10
     lr = 1e-4
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Transforms
     transform = transforms.Compose([
-        transforms.Resize((256, 256)),
         transforms.ToTensor()
     ])
 
     # Datasets
     train_dataset = LLIEPairDataset(root_dir_train, transform=transform)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=3)
 
     test_dataset = LLIEPairTestDataset(root_dir_test, transform=transform)
-    test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=2)
+    test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=3)
 
     # Model
     model = SimpleUNet(in_channels=3, out_channels=3, features=64).to(device)
-    optimizer = optim.Adam(model.parameters(), lr=lr)
 
-    # Training + Testing
-    for epoch in range(num_epochs):
-        model.train()
-        running_loss = 0.0
-        for low_img, normal_img in train_loader:
-            low_img = low_img.to(device)
-            normal_img = normal_img.to(device)
+    if args.mode == 'test':
+        # Load the pre-trained model weights
+        model.load_state_dict(torch.load("simple_unet_llie.pth", map_location=device))
+        print("Loaded saved model weights.")
 
-            # Forward
-            pred = model(low_img)
-            loss = combined_l1_ssim_loss(pred, normal_img)
+        # Run testing on the test set
+        test_l1, test_psnr = test_loop(model, test_loader, device, e=0, num_epochs=1)
+        print(f"Test L1: {test_l1:.4f}, Test PSNR: {test_psnr:.2f} dB")
+    else:
+        optimizer = optim.Adam(model.parameters(), lr=lr)
 
-            # Backward
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+        # Training + Testing
+        for epoch in range(num_epochs):
+            model.train()
+            running_loss = 0.0
+            for low_img, normal_img in train_loader:
+                low_img = low_img.to(device)
+                normal_img = normal_img.to(device)
 
-            running_loss += loss.item()
+                # Forward
+                pred = model(low_img)
+                pred_final = torch.clamp(pred + low_img, 0, 1)
+                loss = combined_l1_ssim_loss(pred_final, normal_img)
 
-        avg_train_loss = running_loss / len(train_loader)
+                # Backward
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
 
-        test_l1, test_psnr = test_loop(model, test_loader, device, epoch, num_epochs)
+                running_loss += loss.item()
 
-        print(f"Epoch [{epoch+1}/{num_epochs}], "
-              f"Train Loss: {avg_train_loss:.4f}, "
-              f"Test L1: {test_l1:.4f}, "
-              f"Test PSNR: {test_psnr:.2f} dB")
+            avg_train_loss = running_loss / len(train_loader)
 
-    # Save model
-    torch.save(model.state_dict(), "simple_unet_llie.pth")
-    print("Model saved.")
+            test_l1, test_psnr = test_loop(model, test_loader, device, epoch, num_epochs)
+    
+            print(f"Epoch [{epoch+1}/{num_epochs}], "
+                f"Train Loss: {avg_train_loss:.4f}, "
+                f"Test L1: {test_l1:.4f}, "
+                f"Test PSNR: {test_psnr:.2f} dB")
+
+        # Save model
+        torch.save(model.state_dict(), "simple_unet_llie.pth")
+        print("Model saved.")
 
 if __name__ == "__main__":
     main()
