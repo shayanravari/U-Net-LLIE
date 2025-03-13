@@ -241,9 +241,12 @@ def test_loop(model, dataloader, device, e, num_epochs):
                 pred_image = pred_image.permute(1, 2, 0).numpy()
 
                 # Display
-                plt.imshow(pred_image)
-                plt.title("Enhanced Image")
-                plt.axis("off")
+                fig = plt.figure(frameon=False)
+                fig.set_size_inches(6, 4)
+                ax = plt.Axes(fig, [0, 0, 1, 1])
+                ax.set_axis_off()
+                fig.add_axes(ax)
+                ax.imshow(pred_image)
                 plt.show()
 
             count += 1
