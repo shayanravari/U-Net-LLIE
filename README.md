@@ -12,9 +12,7 @@ This repository contains PyTorch code for low-light image enhancement using a U-
 ## Features
 
 1. **Attention Blocks**: SEBlock (channel attention) and SpatialAttn (spatial attention) to focus on important features.  
-2. **Combined L1 + SSIM Loss**: Encourages pixel-wise accuracy and structural similarity.  
-3. **Residual Approach (Optional)**: You can enable a residual output (network predicts a delta) to avoid over-smoothing.  
-4. **Perceptual and Edge Loss (Optional)**: The code can be extended with advanced losses for sharper details.
+2. **Combined L1 + SSIM Loss**: Encourages pixel-wise accuracy and structural similarity.
 
 ## Dataset Structure
 
