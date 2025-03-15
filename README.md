@@ -22,4 +22,4 @@ The LOL dataset can be found at https://www.kaggle.com/datasets/soumikrakshit/lo
 
 ## Model
 
-The best model that we trained and saved can be found at: https://ucla.box.com/s/5g03rl3ves3t6d0iajpxrbl9uw9tkunt. The file exceeds the 100 MB limit per file on Github so we were forced to upload this file to Box. If you would like to test on this model, simply download the .pth file into this respository's folder on your local machine and run the model in test mode.
+The best model that we trained and saved can be found at: https://ucla.box.com/s/5g03rl3ves3t6d0iajpxrbl9uw9tkunt. The file exceeds the 100 MB limit per file limit on Github so we were forced to upload this file to Box. If you would like to test on this model, simply download the .pth file into this respository's folder on your local machine and run the model in test mode.
