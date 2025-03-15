@@ -1,4 +1,3 @@
-Pretrained Model Path Download: https://ucla.box.com/s/5g03rl3ves3t6d0iajpxrbl9uw9tkunt
 # Low-Light Image Enhancement (LLIE) with U-Net
 
 This repository contains PyTorch code for low-light image enhancement using a U-Net-based architecture augmented with Squeeze-and-Excitation (SE) and spatial attention blocks.
